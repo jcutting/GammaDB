@@ -111,6 +111,19 @@ This is the most technical source. Stated, as relayed by WebFetch:
 - Git: does not replace Git, which is still used for tagging, shipping, deploying ("Git is a _very_ fancy save button"). Changes can be rebased from one Git commit onto another with per-character attribution kept. How commits are created from the delta history is not explained. [F]
 - Not covered: API/CLI, rewind UI/mechanics, DeltaDB's own license. [F]
 
+#### [F] verified against the full text (pasted by the user, not via WebFetch)
+
+The user pasted the complete text and four diagrams of [F]. The bullets above match it. Corrections and additions, which are verbatim-sourced:
+
+- Schema is given as "hypothetical Rust": `struct EditDelta { insert: String, at: Range<usize>, based_on: Version }` and `enum Version { Git(Sha1), Delta(Vec<DeltaId>) }`. A delta is "either based on something in Git, like a commit or a specific blob, or on earlier deltas." [F]
+- A diagram shows what looks like the real internal types: `HistoryDeltaBatch { id: DeltaBatchId, parent: HistoryVersion, payloads: Vec<HistoryDelta> }` and `DeltaId { timestamp: u64, actor_id: ActorId }`. Deltas are grouped into batches, and each batch has a single parent version. The caption says a delta "carries the text it inserts, the ranges it replaces, and the version it builds on", so it handles replacement, not just insertion. A Git blob is the base for a file's starting text. [F, diagram 1]
+- Causal graph: ids are `(Lamport timestamp, actor)`, e.g. `(1,A)`, then concurrent `(2,A)` and `(2,B)`, then `(3,A)` with parents `(2,A)` and `(2,B)`. "Without a shared clock, order comes from the causal graph." [F, diagram 1]
+- Tiebreak direction is inconsistent in the source. The prose says "`a` comes before `b`, and you get `REACTIVITY`". The diagram caption says "REA is (4, B), C is (4, A). Same timestamp, so the higher actor goes first", and also yields REACTIVITY. The direction is unspecified, so do not copy either rule as spec. The only requirement is that every replica uses the same deterministic tiebreak. [F]
+- Fragment index: "Each file is stored as text plus a B-tree recording which delta created each character." Leaves are fragments with a length and an origin (a delta id, a Git blob, or deleted). Deleted fragments show as zero-length tombstone leaves (`S · 0`, "deleted"), so deletions are retained in the index. [F, diagram 3]
+- Cost: "the common case cheap": keystrokes usually arrive in order and nearly every delta is based on the version you are already viewing, so the fragment-index lookup is only needed for stale-based deltas. Structural sharing: the post's own example stores 6 nodes instead of 9 for one appended character. Growth is "linearithmic" in edit size. [F]
+- Explicitly not solved: "how to represent the file system. If you rename a directory and I rename another, it's easy to end up with a directory inside itself." [F]
+- "delta.dev/docs describes the application built on top of deltadb": DeltaDB is the layer and Delta is the app. [F]
+
 ### [G] "Escaping the tyranny of worktrees" (Conrad Irwin), https://delta.dev/blog/escaping-the-tyranny-of-worktrees
 
 Stated:
