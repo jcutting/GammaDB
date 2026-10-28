@@ -89,21 +89,106 @@ All Inference, derived from the above.
 6. Record the diff merge base for reviews so all viewers compare against the same base [E].
 7. Scope decisions for v1: local-first single machine (no browser/collab/cloud runners), tracked + non-ignored file import honoring gitattributes, CLI-first.
 
+## Findings from blog posts and talk
+
+Follow-up pass, 2026-10-28. Same caveat as above: WebFetch returns model-made summaries, so quotes are as relayed, not verbatim-certified. "Stated" = in the cited source; "Inference" = mine. Source tags [F]-[K] are defined in Sources.
+
+### Link discovery on [A] https://delta.dev/deltadb [A]
+
+Stated: the page lists four blog posts and one talk: "Software Is Made Between Commits" (zed.dev/blog/introducing-deltadb, Jun 11 2026, Nathan Sobo); "DeltaDB: The Future of Version Control" (/blog/future-of-version-control, Oct 15 2026, Conrad Irwin); "Escaping the tyranny of worktrees" (/blog/escaping-the-tyranny-of-worktrees, Oct 6 2026, Conrad Irwin); "Xanadu Was Waiting for Agents" (zed.dev/blog/agentic-xanadu, Sep 1 2026, Nathan Sobo); and "Watch the talk" (YouTube yif2rday2bw) [A]. Its "Under the hood" line: "DeltaDB is built on CRDTs, loosely based on diamond-types and adapted to work with Git." [A]
+
+### [F] "DeltaDB: The Future of Version Control" (Conrad Irwin), https://delta.dev/blog/future-of-version-control
+
+This is the most technical source. Stated, as relayed by WebFetch:
+
+- Delta schema: each edit carries the inserted text, the character range it applies to, and a "based on" version. A version is either a Git object (commit or blob, identified by SHA-1) or a list of delta IDs (a list because edits can be concurrent). Changes are identified by causal parents, so no distributed clock is needed. [F]
+- CRDT: "loosely based on" diamond-types (https://github.com/josephg/diamond-types) but a different implementation so it can interoperate with Git. Unlike Zed's earlier editor CRDT (character IDs), "Instead of baking time into every character's ID, we bake it into the changes." [F]
+- Conflict resolution (text, inside DeltaDB): concurrent inserts at the same position are ordered by an actor-ID tiebreak so all replicas converge irrespective of arrival order. Worked example: from "TIVITY", one edit inserts "REA" and another "C" at the same spot; both replicas converge on "REACTIVITY". [F]
+- Applying a delta: if it is based on the version you already hold it is applied directly (common case); if based on an older version, a fragment index maps the original position into the current document. [F]
+- Storage structure: B-tree fragment index records which delta created each range of characters; immutable trees share structure; each edit copies only the root-to-leaf path, so storage grows with edit size rather than quadratically (the "multi-headed Medusa tree"). On-disk format and backend not described. [F]
+- Sync: changes sync "keystroke by keystroke" to the server and collaborators; wire format and transport not described. [F]
+- Attribution: each character can record its author: person, agent, or the prompt that produced it. An agent can work on its own copy and merge back in. [F]
+- Git: does not replace Git, which is still used for tagging, shipping, deploying ("Git is a _very_ fancy save button"). Changes can be rebased from one Git commit onto another with per-character attribution kept. How commits are created from the delta history is not explained. [F]
+- Not covered: API/CLI, rewind UI/mechanics, DeltaDB's own license. [F]
+
+### [G] "Escaping the tyranny of worktrees" (Conrad Irwin), https://delta.dev/blog/escaping-the-tyranny-of-worktrees
+
+Stated:
+
+- Each thread has its own Delta worktree (project files plus recorded history in DeltaDB). A "checkout" is the temporary directory where Delta materialises that worktree on one machine; the worktree is not tied to it, and Delta can remove the checkout afterwards. [G]
+- Each workspace has its own Git clone, made cheap with unspecified "some tricks". [G]
+- Git: commits are Git commits, branches are Git branches, `origin` is the publish target. Several agents can work on one branch from separate checkouts; "Delta merges their changes before committing and pushing". Standard git switch/merge/rebase/push work in a managed checkout; merge conflicts remain ordinary Git conflicts ("agents don't seem to mind them"). The one-branch-per-worktree restriction does not apply. [G]
+- Setup hooks: `.agents/prepare` (committed executable, run from checkout root on mount before the agent starts, must be fast, avoid dependency installs) and `.agents/linked` (git-ignored paths symlinked to shared machine locations). Recommends shared build caches. [G]
+- Caveat: checkouts are isolated but share the machine's ports, processes, containers, caches and databases, so projects should make ports/DB names/container names configurable. [G]
+- Threads are the durable unit; they can be archived without leaving a directory, and reviewed/edited in a browser without mounting. [G]
+- Not covered: rewind, CLI/API, filesystem mount mechanism, storage format, sync internals. [G]
+
+### [H] "Xanadu Was Waiting for Agents" (Nathan Sobo), https://zed.dev/blog/agentic-xanadu
+
+Conceptual essay. Stated:
+
+- Identity: "Every operation by every human and agent is named by an actor plus a Lamport timestamp, forever." Fragments carry stable identities; DeltaDB records which operation produced each fragment and what state it built on. [H]
+- Intermediate states are named "by the Git commit it descends from" plus the set of delta IDs applied above it (this matches the version representation in [F]). [H]
+- Anchors reference spans that remain resolvable after code moves, unlike line numbers. [H]
+- DeltaDB keeps every version by default ("never overwrite, always version"); no retention/engine detail. [H]
+- A thread is a live projection of structured history, recomputed rather than stored as a flat document; threads replicate to participants' machines and the browser. [H]
+- Git: Delta works with the existing repo; "Every thread is also a Git branch", so non-Delta teammates see a normal repo; files are real files on disk; teams can keep mirroring to GitHub. [H]
+- Agents may provision isolated cloud machines (Firecracker-class microVMs), traverse provenance and prior reasoning, and cite what they read. Proposed "landmarks" for frequently referenced files/symbols. [H]
+- Not covered: schema, conflict rules beyond convergence, rewind mechanism, sync protocol, DeltaDB license (Zed is described as open source; DeltaDB status not stated). [H]
+
+Note: [G] says commits and branches are plain Git objects while [H] says "every thread is also a Git branch"; the two are compatible but the exact thread-to-branch mapping is not specified (Inference).
+
+### [I] "Software Is Made Between Commits" (Nathan Sobo), https://zed.dev/blog/introducing-deltadb
+
+Stated: deltas are "a stream of fine-grained deltas" capturing every operation between commits, each with stable identity so it can be addressed alone. DeltaDB "embeds conflict-free replicated worktrees" so many people/agents can edit the same files concurrently across machines. A message and the edit it produced are recorded side by side; references anchor to deltas rather than line numbers. From a conversation line you can open the code as it is now or as the agent first wrote it; from a code line you can find the conversation that produced it and later ones that touched it. Agents can read context behind code or convene prior agents. Agents work in real files via a terminal; the full worktree can be mounted to disk. "Git and CI stay for what they're good at." Teammates can join mid-work without committing/pushing. Not covered: schema, storage, sync, API, rewind mechanics (closest: viewing code "as it stood the moment the agent wrote it"), git mechanism, DeltaDB license (footer links to zed-industries/zed but no claim DeltaDB is part of it). [I]
+
+### [J] The talk: "Building a Distributed CRDT Layer for Git" (Conrad Irwin, Zed), https://www.youtube.com/watch?v=yif2rday2bw
+
+- Transcript/slides/description NOT retrieved. WebFetch of the watch page returned only YouTube site chrome; a direct curl for captions (timedtext) and the page description returned nothing; a web search did not locate a transcript, slides or event page.
+- Only metadata is confirmed: title and channel come from YouTube oEmbed ("Building a Distributed CRDT Layer for Git - Conrad Irwin, Software Engineer, Zed", channel Zed Industries) [J]; [F] lists it as 22 minutes.
+- No talk content is reported here. Contents are unknown; do not infer from the title. Recommend watching it manually or pasting a transcript.
+
+### [K] Supporting first-party pages
+
+- Data storage, https://delta.dev/docs/privacy-and-security/data-storage: "Delta's backend runs entirely on Cloudflare." Repository files, commits and history packs go to R2; thread changes for sync and account settings go to Durable Objects; metadata to KV and D1. Local machine keeps full history of active threads; archived synced threads' local history is removed 3 days after archive/last open (server copy remains, redownloaded on reopen). Encrypted at rest. Self-hosting is not mentioned. [K1]
+- Zed CRDT post (editor CRDT, predecessor design), https://zed.dev/blog/crdts: replica ids plus sequence numbers give insertion ids; anchors are (insertion id, offset); inserted text is immutable and fragments split on interior insert; tombstones keep deleted text resolvable, deletions carry a version vector; concurrent inserts at one location sorted descending by Lamport timestamp, replica id as tiebreak; undo via per-operation counters (odd = undone). This is the earlier editor design and [F] says DeltaDB moves time into the changes, so treat it as background, not DeltaDB's spec. [K2]
+
+### Takeaways for a git + coding-agents clone
+
+Inference unless cited.
+
+1. A workable data model is documented: delta = (actor, inserted text, range, based-on version) where version = git object SHA or list of delta IDs; text ordering by Lamport/actor tiebreak [F][H]. File-tree ops are still unspecified.
+2. Git integration can be thin: threads/worktrees materialise as separate real clones with ordinary git branches; DeltaDB conflicts are CRDT-resolved, git-level conflicts stay ordinary git conflicts [G][H].
+3. Keying intermediate versions to a base git commit plus delta-ID set gives a natural bridge between deltas and commits (and rebase onto another commit) [F][H].
+4. Resource isolation beyond files (ports, DBs, containers) is a real concern with parallel agents and is only addressed by convention [G].
+5. Cloud architecture reference (R2 + Durable Objects per-thread sync) is a useful design hint for a hosted variant [K1]; a local-first clone is a choice, not a copy.
+
 ## Open questions
 
-Not stated in the pages read (so not guessed):
+Status key (added in follow-up pass): ANSWERED / PARTIAL / OPEN, with citations. Original wording retained below each item's status line.
 
 1. Data model details: the exact delta schema, ID scheme, version representation (vector clocks? DAG?), granularity (keystroke vs. save), and how file-tree ops (rename/move/delete) are modelled as CRDT ops.
+   - STATUS PARTIAL. Stated: delta = inserted text + char range + based-on version; version = git object SHA-1 or list of delta IDs; causal parents, no distributed clock [F]; ops named by actor + Lamport timestamp [H]; granularity is per keystroke sync [F]. Still open: ID byte format, file-tree op (rename/move/delete) modelling.
 2. Where DeltaDB data lives: local store format, server-side storage, what is stored in the cloud vs. on-device (a privacy page exists: https://delta.dev/docs/privacy-and-security/data-storage, unread). Whether it is self-hostable.
+   - STATUS PARTIAL. Stated: hosted on Cloudflare (R2 history packs, Durable Objects for sync, KV/D1 metadata); local machine keeps full history of active threads; encrypted at rest; no self-hosting mentioned [K1]. Still open: local store format, self-hostability.
 3. Conflict handling: what happens when two threads edit the same lines and are then merged, or when a checkout and worktree diverge; [D] and [E] both explicitly do not describe it.
+   - STATUS PARTIAL. Stated: concurrent text inserts converge via actor-ID tiebreak, fragment index maps older-based deltas [F]; git-level merge conflicts remain ordinary git conflicts, agents handle them [G]. Still open: same-line cross-thread merge semantics, checkout vs worktree divergence.
 4. Relationship of deltas to git objects: is there any recorded link between a delta range and a resulting commit SHA ("tracing code back to its conversation" is claimed [A] but the mechanism is not).
+   - STATUS PARTIAL. Stated: versions reference git commits/blobs by SHA-1 [F]; intermediate states = base commit + delta-ID set [H]; rebase between commits keeps per-char attribution [F]. Still open: how a resulting commit SHA is linked back to a delta range.
 5. How ref/branch state is represented inside DeltaDB, and what "forking" a thread does to files and history.
+   - STATUS PARTIAL. Stated: commits/branches are plain git [G]; "every thread is also a Git branch" [H]; agent can work on its own copy and merge back [F]. Still open: fork mechanics and internal ref representation.
 6. What consistency guarantees apply: "concurrent edits resolve the same way on every machine" [A] is the only claim; nothing on durability, ordering across replicas, offline operation, or partial-failure semantics (beyond [E]'s warnings that multi-worktree merges and landings can partly apply).
+   - STATUS PARTIAL. Stated: convergence irrespective of arrival order [F]; all versions kept by default [H]; sync keystroke by keystroke [F]; local history retained for active threads, 3-day pruning for archived synced ones [K1]. Still open: offline semantics, durability/ordering guarantees.
 7. Public API/SDK: none is described. The CLI is "Beta" with pages https://delta.dev/docs/cli/get-started, /docs/cli/claude-code, /docs/cli/build-a-plugin (unread); no command surface is documented in the primaries. The only git commands shown are standard git plus `jj git init --colocate`.
+   - STATUS OPEN. None of [F][G][H][I] describe API/CLI surface (site nav lists /cli, /docs, /roadmap only [F]).
 8. How the file-system mount/sync works (FUSE? file watcher? how external tool edits become deltas).
+   - STATUS OPEN (slightly narrowed). Stated: worktree is mounted into a temporary checkout [G]; files are real files on disk [H]; each workspace has its own git clone via unspecified "tricks" [G]. FUSE vs watcher and external-edit capture not described.
 9. Size/scale limits, large or binary files, submodules, LFS.
+   - STATUS OPEN. Only claim: storage grows with edit size via structural sharing [F]. Binary/LFS/submodules not covered.
 10. How "merge worktrees" is implemented (git merge in a checkout vs CRDT merge) and what "thread family" means precisely.
+   - PARTIAL. Stated: several agents on one branch from separate checkouts; "Delta merges their changes before committing and pushing" [G]; standard git merge/rebase work in checkouts [G]. Whether this is CRDT merge or git merge, and "thread family", remain unspecified.
 11. Licensing/open-source status of DeltaDB; the diamond-types basis is only described as "loosely based".
+   - STATUS OPEN. Zed is called open source, but no source states DeltaDB/Delta licence [H][I]; diamond-types is third-party and DeltaDB is a different implementation [F].
 
 ## Sources
 
@@ -115,4 +200,14 @@ Read (via WebFetch, summarised by the tool):
 - [D] https://delta.dev/docs/concepts/core-concepts
 - [E] https://delta.dev/docs/agents/review-and-sync
 
-Linked but not read (candidates for follow-up): https://delta.dev/blog/future-of-version-control, https://delta.dev/blog/escaping-the-tyranny-of-worktrees, https://zed.dev/blog/introducing-deltadb, https://zed.dev/blog/agentic-xanadu, https://www.youtube.com/watch?v=yif2rday2bw, https://delta.dev/docs/agents/threads, https://delta.dev/docs/agents/subagents, https://delta.dev/docs/cli/get-started, https://delta.dev/docs/privacy-and-security/data-storage, https://delta.dev/docs/troubleshooting.
+Read in follow-up pass (via WebFetch, summarised by the tool):
+
+- [F] https://delta.dev/blog/future-of-version-control
+- [G] https://delta.dev/blog/escaping-the-tyranny-of-worktrees
+- [H] https://zed.dev/blog/agentic-xanadu
+- [I] https://zed.dev/blog/introducing-deltadb
+- [J] https://www.youtube.com/watch?v=yif2rday2bw (metadata only via oEmbed https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=yif2rday2bw&format=json; NO transcript retrieved)
+- [K1] https://delta.dev/docs/privacy-and-security/data-storage
+- [K2] https://zed.dev/blog/crdts
+
+Still linked but not read: https://delta.dev/docs/agents/threads, https://delta.dev/docs/agents/subagents, https://delta.dev/docs/cli/get-started, https://delta.dev/docs/privacy-and-security/data-storage, https://delta.dev/docs/troubleshooting.
